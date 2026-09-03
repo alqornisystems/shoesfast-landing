@@ -1,0 +1,5 @@
+User-Agent: *
+Allow: /
+
+Host: https://shoesfast.id
+Sitemap: https://shoesfast.id/sitemap.xml

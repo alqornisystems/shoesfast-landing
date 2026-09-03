@@ -1,0 +1,8 @@
+# Minimal .htaccess — kompatibel dengan semua shared hosting termasuk Jagohost
+# Site pakai trailingSlash:true di Next.js, jadi URL routing native via DirectoryIndex.
+# Tidak butuh RewriteRule, Options, atau Header — yang sering di-block oleh shared host.
+
+ErrorDocument 404 /404.html
+
+RedirectMatch 301 ^/cuci-sepatu-branded-malang-surabaya/?$ https://shoesfast.id/
+
