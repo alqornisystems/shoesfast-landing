@@ -4,6 +4,13 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:   # bisa dijalankan manual dari tab Actions
+    inputs:
+      semua:
+        description: >-
+          Kirim SELURUH berkas, bukan hanya yang berubah. Dipakai untuk deploy
+          pertama dan untuk memulihkan server yang isinya sudah menyimpang.
+        type: boolean
+        default: false
 
 # Cegah dua deploy jalan bersamaan (push beruntun)
 concurrency:
@@ -31,11 +38,23 @@ jobs:
              || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
             BEFORE="$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)"
           fi
-          echo "Diff dari $BEFORE ke ${{ github.sha }}"
           # Yang tidak perlu ada di server: konfigurasi CI dan berkas yang hanya
           # dibaca manusia di GitHub. README yang ikut naik akan tersaji di
           # https://shoesfast.id/README.md — bukan rahasia, tapi juga bukan halaman.
           EXCLUDE='^\.github/|^README\.md$|^\.gitignore$'
+
+          # Diff tidak bisa menjawab "server ini masih kosong". Berkas yang sudah
+          # lama ada di repo tidak muncul di diff mana pun, jadi deploy pertama
+          # yang gagal meninggalkan situs yang tidak akan pernah terkirim sendiri.
+          if [ "${{ inputs.semua }}" = "true" ]; then
+            echo "Mode: SELURUH berkas"
+            git ls-files | grep -Ev "$EXCLUDE" > changed.txt || true
+            : > deleted.txt
+            echo "--- File dikirim (upload) ---"; cat changed.txt || true
+            exit 0
+          fi
+
+          echo "Diff dari $BEFORE ke ${{ github.sha }}"
           git diff --name-only --diff-filter=ACMR "$BEFORE" "${{ github.sha }}" | grep -Ev "$EXCLUDE" > changed.txt || true
           git diff --name-only --diff-filter=D    "$BEFORE" "${{ github.sha }}" | grep -Ev "$EXCLUDE" > deleted.txt || true
           echo "--- File berubah (upload) ---"; cat changed.txt || true
