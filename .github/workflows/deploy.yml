@@ -59,6 +59,22 @@ jobs:
           PORT="${FTP_PORT:-21}"
           REMOTE_PATH="${REMOTE_PATH:-public_html}"
 
+          # Secret yang kosong tidak membuat lftp berhenti — ia mencoba membuka
+          # "ftp://:21", gagal diam-diam, lalu menjawab setiap unggahan dengan
+          # "Not connected". Hasilnya 84 baris galat yang tidak satu pun
+          # menyebutkan sebabnya. Berhenti di sini, dengan menyebut nama secret
+          # yang kurang, dan tanpa mencetak isinya.
+          KURANG=""
+          [ -z "${FTP_HOST:-}" ] && KURANG="$KURANG FTP_HOST"
+          [ -z "${FTP_USER:-}" ] && KURANG="$KURANG FTP_USER"
+          [ -z "${FTP_PASSWORD:-}" ] && KURANG="$KURANG FTP_PASSWORD"
+          if [ -n "$KURANG" ]; then
+            echo "Secret berikut belum diisi di repo ini:$KURANG"
+            echo "Pasang di Settings > Secrets and variables > Actions."
+            echo "Secret TIDAK diturunkan antar repo — punya repo lain tidak berlaku di sini."
+            exit 1
+          fi
+
           # Bangun script perintah lftp (FTP dengan TLS/FTPS otomatis bila didukung)
           SCRIPT="set net:max-retries 2; set net:timeout 20;"
           SCRIPT="$SCRIPT set ssl:verify-certificate no;"
