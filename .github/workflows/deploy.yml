@@ -1,0 +1,100 @@
+name: Deploy to FTP
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:   # bisa dijalankan manual dari tab Actions
+
+# Cegah dua deploy jalan bersamaan (push beruntun)
+concurrency:
+  group: deploy-ftp
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (dengan history untuk diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Hitung file yang berubah & dihapus
+        id: diff
+        run: |
+          set -euo pipefail
+          BEFORE="${{ github.event.before }}"
+          ZERO="0000000000000000000000000000000000000000"
+          # Run manual / push pertama / force-push: default bandingkan ke commit sebelumnya (bukan seluruh repo)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             || [ -z "$BEFORE" ] || [ "$BEFORE" = "$ZERO" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            BEFORE="$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)"
+          fi
+          echo "Diff dari $BEFORE ke ${{ github.sha }}"
+          # Yang tidak perlu ada di server: konfigurasi CI dan berkas yang hanya
+          # dibaca manusia di GitHub. README yang ikut naik akan tersaji di
+          # https://shoesfast.id/README.md — bukan rahasia, tapi juga bukan halaman.
+          EXCLUDE='^\.github/|^README\.md$|^\.gitignore$'
+          git diff --name-only --diff-filter=ACMR "$BEFORE" "${{ github.sha }}" | grep -Ev "$EXCLUDE" > changed.txt || true
+          git diff --name-only --diff-filter=D    "$BEFORE" "${{ github.sha }}" | grep -Ev "$EXCLUDE" > deleted.txt || true
+          echo "--- File berubah (upload) ---"; cat changed.txt || true
+          echo "--- File dihapus (remove) ---"; cat deleted.txt || true
+
+      - name: Install lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y lftp
+
+      - name: Upload file yang berubah via FTP
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          # Situs ini duduk langsung di akar web, bukan di subfolder seperti
+          # aplikasi backend. Tetap boleh ditimpa lewat secret kalau suatu saat
+          # akarnya berpindah.
+          REMOTE_PATH: ${{ secrets.FTP_REMOTE_PATH }}
+        run: |
+          set -euo pipefail
+          PORT="${FTP_PORT:-21}"
+          REMOTE_PATH="${REMOTE_PATH:-public_html}"
+
+          # Bangun script perintah lftp (FTP dengan TLS/FTPS otomatis bila didukung)
+          SCRIPT="set net:max-retries 2; set net:timeout 20;"
+          SCRIPT="$SCRIPT set ssl:verify-certificate no;"
+          SCRIPT="$SCRIPT set ftp:ssl-allow true; set ftp:ssl-protect-data true; set ftp:ssl-force false;"
+          SCRIPT="$SCRIPT open -u \"$FTP_USER\",\"$FTP_PASSWORD\" ftp://$FTP_HOST:$PORT;"
+
+          # Upload / update file yang berubah
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            dir=$(dirname "$f")
+            # Berkas di akar (index.html, .htaccess, sitemap.xml) tidak boleh
+            # dikirim ke "$REMOTE_PATH/." — sebagian server FTP memperlakukan
+            # jalur itu sebagai direktori bernama titik.
+            if [ "$dir" = "." ]; then
+              dest="$REMOTE_PATH"
+            else
+              dest="$REMOTE_PATH/$dir"
+              SCRIPT="$SCRIPT mkdir -p -f \"$dest\";"
+            fi
+            SCRIPT="$SCRIPT put -O \"$dest\" \"$f\";"
+          done < changed.txt
+
+          # Hapus file yang dihapus dari repo. Penting untuk situs ini: nama
+          # berkas di `_next/static/` mengandung hash, jadi tiap build
+          # meninggalkan berkas lama yang tidak akan pernah tertimpa.
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            SCRIPT="$SCRIPT rm -f \"$REMOTE_PATH/$f\";"
+          done < deleted.txt
+
+          SCRIPT="$SCRIPT bye"
+
+          if [ ! -s changed.txt ] && [ ! -s deleted.txt ]; then
+            echo "Tidak ada perubahan file untuk di-deploy."
+            exit 0
+          fi
+
+          lftp -c "$SCRIPT"
+          echo "Deploy selesai."
