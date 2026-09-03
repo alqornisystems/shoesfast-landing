@@ -75,6 +75,35 @@ jobs:
             exit 1
           fi
 
+          # Bentuk secret, bukan isinya. "Not connected" pada setiap unggahan tidak
+          # membedakan host salah ketik, host yang terlanjur memuat "ftp://", atau
+          # newline yang ikut ter-paste — ketiganya gagal dengan cara yang sama.
+          echo "host: ${#FTP_HOST} karakter, port $PORT, user: ${#FTP_USER} karakter"
+          echo "tujuan: $REMOTE_PATH"
+          case "$FTP_HOST" in
+            ftp://*|http://*|https://*)
+              echo "PERINGATAN: FTP_HOST memuat skema URL; isi host saja." ;;
+          esac
+          case "$FTP_HOST" in
+            */*)
+              echo "PERINGATAN: FTP_HOST memuat garis miring; isi host saja, tanpa jalur." ;;
+          esac
+          if [ "$FTP_HOST" != "$(printf %s "$FTP_HOST" | tr -d "[:space:]")" ]; then
+            echo "PERINGATAN: FTP_HOST memuat spasi atau newline."
+          fi
+
+          # Koneksi diuji lebih dulu supaya sebabnya terbaca sekali, bukan terkubur
+          # di bawah 84 baris "Not connected" yang semuanya cuma akibat.
+          echo "--- Uji koneksi ---"
+          UJI="set net:max-retries 1; set net:timeout 15;"
+          UJI="$UJI set ssl:verify-certificate no;"
+          UJI="$UJI set ftp:ssl-allow true; set ftp:ssl-protect-data true; set ftp:ssl-force false;"
+          UJI="$UJI open -u \"$FTP_USER\",\"$FTP_PASSWORD\" ftp://$FTP_HOST:$PORT; pwd; bye"
+          if ! lftp -c "$UJI"; then
+            echo "Koneksi FTP gagal. Periksa FTP_HOST, FTP_PORT, FTP_USER, FTP_PASSWORD."
+            exit 1
+          fi
+
           # Bangun script perintah lftp (FTP dengan TLS/FTPS otomatis bila didukung)
           SCRIPT="set net:max-retries 2; set net:timeout 20;"
           SCRIPT="$SCRIPT set ssl:verify-certificate no;"
